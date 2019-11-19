@@ -12,7 +12,7 @@ classification_loss = tf.keras.losses.CategoricalCrossentropy()
 optimizer = tf.optimizers.Adam()
 
 # define base CNN model and load if checkpoint exists, otherwise train
-CNN_model, ckpt, ckpt_path, manager = make_base_model(img_shape, optimizer, 'basic_CNN')
+CNN_model, ckpt, ckpt_path, manager = make_base_model(img_shape, 10, optimizer, 'basic_CNN')
 train_on_dataset(CNN_model, train_images, train_labels, test_images, test_labels, batch_size, n_epochs, classification_loss, optimizer, ckpt, ckpt_path, manager)
 
 # create a new model to finetune and load if checkpoint exists, otherwise train

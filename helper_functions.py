@@ -4,13 +4,28 @@ import matplotlib.pyplot as plt
 import os
 
 
-def make_base_model(img_shape, optimizer, base_model_name):
-    model = tf.keras.Sequential([
-        tf.keras.layers.InputLayer(input_shape=img_shape),
-        tf.keras.layers.Conv2D(filters=5, kernel_size=(5, 5), padding='same', activation='relu'),
-        tf.keras.layers.Conv2D(filters=3, kernel_size=(3, 3), padding='same', activation='relu'),
-        tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(10, activation='softmax')])
+def make_base_model(img_shape, n_output_neurons, optimizer, base_model_name):
+
+    if base_model_name.lower() == 'resnet50':
+        from tensorflow.keras.applications import ResNet50
+        from main import batch_size
+        input_layer = tf.keras.layers.Input(batch_shape=(batch_size,)+img_shape)
+        model = ResNet50(weights=None, input_tensor=input_layer, classes=n_output_neurons)
+    elif base_model_name.lower() == 'vgg16' and img_shape[0]:
+        try:
+            from tensorflow.keras.applications import VGG16
+            from main import batch_size
+            input_layer = tf.keras.layers.Input(batch_shape=(batch_size,)+img_shape)
+            model = VGG16(weights=None, input_tensor=input_layer, classes=n_output_neurons)
+        except:
+            print('VGGnet requires with 224x224x3 images. Please choose another network')
+    else:
+        model = tf.keras.Sequential([
+            tf.keras.layers.InputLayer(input_shape=img_shape),
+            tf.keras.layers.Conv2D(filters=5, kernel_size=(5, 5), padding='same', activation='relu'),
+            tf.keras.layers.Conv2D(filters=3, kernel_size=(3, 3), padding='same', activation='relu'),
+            tf.keras.layers.Flatten(),
+            tf.keras.layers.Dense(n_output_neurons, activation='softmax')])
 
     # needed for saving models
     ckpt = tf.train.Checkpoint(step=tf.Variable(0), optimizer=optimizer, net=model)
@@ -26,11 +41,11 @@ def make_base_model(img_shape, optimizer, base_model_name):
 
 
 def make_finetuning_model(base_model, n_output_neurons, optimizer, train_only_decoder, finetuning_model_name):
-    base_model.layers.pop()  # we remove the last layer from the base model
+
     base_model.trainable = False if train_only_decoder else True  # choose whether to train the weights of the CNN
 
-    x = base_model.layers[-1].output  # we get the activity in the last layer (the one before the one we just removed)
-    x = tf.keras.layers.Dense(n_output_neurons, activation='softmax')(x)  # and add a new fully connected decoder layer
+    x = base_model.layers[-2].output  # we get the activity in the last layer before the decoder.
+    x = tf.keras.layers.Dense(n_output_neurons, activation='softmax')(x)  # and add a new fully connected decoder layer on top of that.
     finetuning_model = tf.keras.models.Model(inputs=base_model.input, outputs=x)
 
     # setup model saving
@@ -61,7 +76,7 @@ def train_step(model, batch_imgs, batch_labels, loss_fn, optimizer, vars_to_trai
 
 def train_on_dataset(model, train_data, train_labels, test_data, test_labels, batch_size, n_epochs, loss_fn, optimizer, checkpoint, checkpoint_path, saving_manager):
     if os.path.exists(checkpoint_path):
-        checkpoint.restore(checkpoint_path.latest_checkpoint)
+        checkpoint.restore(saving_manager.latest_checkpoint)
     else:
         n_samples = train_data.shape[0]
         n_batches = n_samples//batch_size
