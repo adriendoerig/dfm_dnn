@@ -35,18 +35,19 @@ def make_base_model(img_shape, n_output_neurons, optimizer, base_model_name):
     # Print network summary and check which layers are trainable
     model.summary()
     for layer in model.layers:
-        print('{}: layer {} is {}.'.format(base_model_name, layer.name, layer.trainable))
+        print('{}: layer {} has trainable = {}.'.format(base_model_name, layer.name, layer.trainable))
 
     return model, ckpt, ckpt_path, manager
 
 
 def make_finetuning_model(base_model, n_output_neurons, optimizer, train_only_decoder, finetuning_model_name):
 
-    base_model.trainable = False if train_only_decoder else True  # choose whether to train the weights of the CNN
+    cloned_model = tf.keras.models.clone_model(base_model)  # we need to make a new copy of the model to avoid changing the weights of the base models when we train the finetuning model.
+    cloned_model.trainable = False if train_only_decoder else True  # choose whether to train the weights of the CNN
 
-    x = base_model.layers[-2].output  # we get the activity in the last layer before the decoder.
+    x = cloned_model.layers[-2].output  # we get the activity in the last layer before the decoder.
     x = tf.keras.layers.Dense(n_output_neurons, activation='softmax')(x)  # and add a new fully connected decoder layer on top of that.
-    finetuning_model = tf.keras.models.Model(inputs=base_model.input, outputs=x)
+    finetuning_model = tf.keras.models.Model(inputs=cloned_model.input, outputs=x)
 
     # setup model saving
     finetuning_ckpt = tf.train.Checkpoint(step=tf.Variable(0), optimizer=optimizer, net=finetuning_model)
@@ -56,7 +57,7 @@ def make_finetuning_model(base_model, n_output_neurons, optimizer, train_only_de
     # Print network summary and check which layers are trainable
     finetuning_model.summary()
     for layer in finetuning_model.layers:
-        print('{}: layer {} has trainable =  {}.'.format(finetuning_model_name, layer.name, layer.trainable))
+        print('{}: layer {} has trainable = {}.'.format(finetuning_model_name, layer.name, layer.trainable))
 
     return finetuning_model, finetuning_ckpt, finetuning_ckpt_path, finetuning_manager
 
