@@ -1,7 +1,10 @@
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
-import os
+from matplotlib.image import imread
+from skimage.transform import resize
+import imgaug.augmenters as iaa
+import os, random, h5py
 
 
 def make_base_model(img_shape, n_output_neurons, optimizer, base_model_name):
@@ -22,8 +25,14 @@ def make_base_model(img_shape, n_output_neurons, optimizer, base_model_name):
     else:
         model = tf.keras.Sequential([
             tf.keras.layers.InputLayer(input_shape=img_shape),
-            tf.keras.layers.Conv2D(filters=5, kernel_size=(5, 5), padding='same', activation='relu'),
-            tf.keras.layers.Conv2D(filters=3, kernel_size=(3, 3), padding='same', activation='relu'),
+            tf.keras.layers.Conv2D(filters=25, kernel_size=(9, 9), padding='same', activation='relu'),
+            tf.keras.layers.MaxPool2D(pool_size=(2, 2)),
+            tf.keras.layers.Conv2D(filters=50, kernel_size=(5, 5), padding='same', activation='relu'),
+            tf.keras.layers.MaxPool2D(pool_size=(2, 2)),
+            tf.keras.layers.Conv2D(filters=50, kernel_size=(5, 5), padding='same', activation='relu'),
+            tf.keras.layers.MaxPool2D(pool_size=(2, 2)),
+            tf.keras.layers.Conv2D(filters=100, kernel_size=(3, 3), padding='same', activation='relu'),
+            tf.keras.layers.MaxPool2D(pool_size=(2, 2)),
             tf.keras.layers.Flatten(),
             tf.keras.layers.Dense(n_output_neurons, activation='softmax')])
 
@@ -61,86 +70,187 @@ def make_finetuning_model(base_model, n_output_neurons, optimizer, train_only_de
 
     return finetuning_model, finetuning_ckpt, finetuning_ckpt_path, finetuning_manager
 
+
+def make_RFD_hdf5(emotions='all', genders='all', angles='all', resized_shape=224, im_path='./RFD', output_path='./RFD_dataset.h5'):
+    '''load data from the Radboud Faces Dataset.
+       emotions: a list of 'angry', 'contemptuous', 'disgusted', 'fearful', 'happy', 'neutral', 'sad', 'surprised' or 'all'
+       genders: a list of 'male', 'female' or 'all'
+       angles: a list of '000', '045', '090', '135', '180' or 'all'
+       path: path to the dataset (e.g. './RFD')
+       resized_shape: int we will resize images to be squares of this size
+       '''
+
+    if os.path.exists(output_path):
+        print('file {} exists. Skipping dataset creation'.format(output_path))
+        return
+    # make sure we have lists (to cope with 'angry' instead of ['angry'] for example)
+    emotions = emotions if isinstance(emotions, list) else [emotions]
+    genders = genders if isinstance(genders, list) else [genders]
+    angles = angles if isinstance(angles, list) else [angles]
+    # 'all' means you want all the possibilities
+    emotions = ['angry', 'contemptuous', 'disgusted', 'fearful', 'happy', 'neutral', 'sad', 'surprised'] if emotions == ['all'] else emotions
+    genders = ['male', 'female'] if genders == ['all'] else genders
+    angles = ['000', '045', '090', '135', '180'] if angles == ['all'] else angles
+    # 'male' and 'female' are both part of 'female', so we use '_male' instead
+    genders = ['_male' if gender == 'male' else gender for gender in genders]
+    # get list of images satisfying the requested features
+    full_list = os.listdir(im_path)
+    final_list = [nm for nm in full_list if (any(ft in nm for ft in emotions) and any(ft in nm for ft in genders) and any(ft in nm for ft in angles))]  # this complicated statement makes sure at least one requested emotion, one requested gender and one requested angle are present
+    random.shuffle(final_list)
+    n_imgs, n_IDs, n_emotions, n_genders = len(final_list), 73, len(emotions), len(genders)
+
+    set_fractions = {'train': [0.0, 0.6], 'val': [0.6, 0.8], 'test': [0.8, 1.0]}  # fraction of all data for each set
+
+    # go through all images, crop to a square image in the face region and resize to manageable size, get labels and save
+    with h5py.File(output_path, "w") as f:
+        for set in ["train", "val", "test"]:
+            img_indices = [int(set_fractions[set][0]*n_imgs), int(set_fractions[set][1]*n_imgs)]
+            set_n_imgs = img_indices[1] - img_indices[0]
+            group = f.create_group(set)
+            group.create_dataset("n_imgs", data=[set_n_imgs])
+            group.create_dataset("data", shape=((np.ceil(set_fractions[set][1]-set_fractions[set][0])*n_imgs), resized_shape, resized_shape, 1), dtype=np.float32)
+            group.create_dataset("ID_labels", shape=((np.ceil(set_fractions[set][1]-set_fractions[set][0])*n_imgs), n_IDs), dtype=np.uint8)
+            group.create_dataset("emotion_labels", shape=((np.ceil(set_fractions[set][1]-set_fractions[set][0])*n_imgs), n_emotions), dtype=np.uint8)
+            group.create_dataset("gender_labels", shape=((np.ceil(set_fractions[set][1]-set_fractions[set][0])*n_imgs), n_genders), dtype=np.uint8)
+
+            for n, filename in enumerate(final_list[img_indices[0]:img_indices[1]]):
+                print('\rCreating {} dataset {} %...'.format(set, int(n/set_n_imgs*100)), end='')
+                # get image, crop, resize and make grayscale
+                image = imread(im_path+'/'+filename)
+                dataset_image = np.mean(resize(image[150:150+image.shape[1], :, :], output_shape=[resized_shape, resized_shape, image.shape[2]]), axis=-1, keepdims=True)
+                # the ID label is given in the filename
+                this_ID_label = int(filename[8:10]) - 1  # -1 to go from [1,73] to [0,72]
+                # the emotion label must be created by figuring out which of our requested emotions is in the filename, then assigning a number to each possible emotion
+                this_emotion = [em for em in emotions if em in filename]
+                this_emotion_label = emotions.index(this_emotion[0])
+                # we do something similar as for emotion for the gender
+                this_gender = [ge for ge in genders if ge in filename]
+                this_gender_label = genders.index(this_gender[0])
+                f[set]['data'][n] = dataset_image
+                f[set]['ID_labels'][n] = tf.keras.utils.to_categorical(this_ID_label, num_classes=n_IDs)
+                f[set]['emotion_labels'][n] = tf.keras.utils.to_categorical(this_emotion_label, num_classes=n_emotions)
+                f[set]['gender_labels'][n] = tf.keras.utils.to_categorical(this_gender_label, num_classes=n_genders)
+
+
+def check_hdf5_dataset(dataset_path='./RFD_dataset.h5'):
+    # try to read the dataset if you want to check everything is alright
+    check_dataset = True
+    if check_dataset:
+        with h5py.File(dataset_path, "r") as f:
+            sample_images = f['train']['data'][:25]
+            sample_ID_labels = np.argmax(f['train']['ID_labels'][:25], axis=1)  # argmax to go from one_hot to int
+            sample_emotion_labels = np.argmax(f['train']['emotion_labels'][:25], axis=1)
+            sample_gender_labels = np.argmax(f['train']['gender_labels'][:25], axis=1)
+            fig, ax = plt.subplots(5, 5)
+            for n in range(25):
+                ax[n//5][n%5].imshow(sample_images[n, :, :, 0], cmap='gray')
+                ax[n//5][n%5].title.set_text('ID: {}, emotion: {}, gender: {}'.format(sample_ID_labels[n], sample_emotion_labels[n], sample_gender_labels[n]))
+        plt.show()
+
+
+def visualize_batch(batch_images, batch_labels, preds, loss, accuracy):
+    preds = tf.argmax(preds, axis=1)
+    batch_labels = tf.argmax(batch_labels, axis=1)
+    fig, ax = plt.subplots(5, 5)
+    for n in range(25):
+        ax[n // 5][n % 5].imshow(batch_images[n, :, :, 0], cmap='gray')
+        ax[n // 5][n % 5].title.set_text('label: {}, pred {}'.format(batch_labels[n], preds[n]))
+    fig.suptitle('batch loss: {}, batch accuracy: {}'.format(loss, accuracy))
+    plt.show()
+
+
 def batch_accuracy(labels, preds):
     return tf.reduce_mean(tf.cast(tf.equal(tf.argmax(preds, axis=1), tf.argmax(labels, axis=1)), tf.float32))
 
 
-def train_step(model, batch_imgs, batch_labels, loss_fn, optimizer, vars_to_train):
+def train_step(model, batch_imgs, batch_labels, loss_fn, optimizer, vars_to_train, visualize_this_batch=False):
+    tf.debugging.assert_rank(tf.squeeze(batch_labels), 2, message='please provide one_hot encoded labels')
     with tf.GradientTape() as tape:
         preds = model(batch_imgs)
         accuracy = batch_accuracy(batch_labels, preds)
         loss = loss_fn(batch_labels, preds)
         grad = tape.gradient(loss, vars_to_train)
         optimizer.apply_gradients(zip(grad, vars_to_train))
+        if visualize_this_batch: visualize_batch(batch_imgs, batch_labels, preds, loss, accuracy)
     return loss, accuracy
 
 
-def train_on_dataset(model, train_data, train_labels, test_data, test_labels, batch_size, n_epochs, loss_fn, optimizer, checkpoint, checkpoint_path, saving_manager):
+def train_on_hdf5_dataset(model, dataset_path, label_type, batch_size, n_epochs, loss_fn, optimizer, checkpoint, checkpoint_path, saving_manager, augment_data=True, visualize_batches=False):
+    '''train and test a model on an hdf5 dataset (see make_RFD_hdf5() for details about the dataset)
+    model: a keras model
+    dataset_path: str -  the path to the hdf5 dataset
+    label_type: str - 'ID_labels', 'emotion_labels' or 'gender_labels', depending on the task you want to use
+    the other inputs are self-explanatory'''
+
     if os.path.exists(checkpoint_path):
         checkpoint.restore(saving_manager.latest_checkpoint)
     else:
-        n_samples = train_data.shape[0]
-        n_batches = n_samples//batch_size
-        losses = np.zeros(n_batches*n_epochs)
-        accuracies = np.zeros(n_batches*n_epochs)
-        vars_to_train = model.trainable_variables
-        counter = 0
 
-        for epoch in range(n_epochs):
-            for batch in range(n_batches):
-                batch_imgs = train_data[batch*batch_size:(batch+1)*batch_size]
-                batch_labels = train_labels[batch*batch_size:(batch+1)*batch_size]
-                losses[counter], accuracies[counter] = train_step(model, batch_imgs, batch_labels, loss_fn, optimizer, vars_to_train)
-                if batch % 25 == 0:
-                    print('\rEpoch {}, batch {} -- loss = {}, accuracy = {}'.format(epoch, batch, losses[counter], accuracies[counter]), end=' ')
-                counter += 1
-                checkpoint.step.assign_add(1)
-                if int(checkpoint.step) % 250 == 0 or batch == n_batches-1:
-                    save_path = saving_manager.save()
-                    print("\nSaved checkpoints for step {}: {} (epoch {}).".format(int(checkpoint.step), save_path, epoch))
+        sometimes = lambda aug: iaa.Sometimes(0.5, aug)
+        augment_seq = iaa.Sequential([iaa.Fliplr(0.5),
+                                      iaa.OneOf([iaa.AdditiveGaussianNoise(scale=0.03), iaa.AdditiveLaplaceNoise(scale=0.03), iaa.Dropout(.03)]),
+                                      sometimes(iaa.Affine(scale={"x": (0.9, 1.1), "y": (0.9, 1.1)}, # scale images to 90-110% of their size, individually per axis
+                                                           translate_percent={"x": (-0.1, 0.1), "y": (-0.1, 0.1)},  # translate by -10 to +10 percent (per axis)
+                                                           rotate=(-5, 5),  # rotate by -5 to +5 degrees
+                                                           shear=(-5, 5),  # shear by -16 to +16 degrees
+                                                          ))
+                                     ],
+                                     random_order=True)
 
-        if test_data is not None:
-            print('\nComputing performance on test set...')
-            n_test_samples = test_data.shape[0]
+        with h5py.File(dataset_path, 'r') as f:
+            n_train_samples = f['train']['n_imgs'][0]
+            n_val_samples = f['val']['n_imgs'][0]
+            n_test_samples = f['test']['n_imgs'][0]
+            n_train_batches = n_train_samples//batch_size
+            n_val_batches = n_val_samples//batch_size
             n_test_batches = n_test_samples//batch_size
-            test_loss = 0
-            test_accuracy = 0
+            losses = np.zeros(n_train_batches*n_epochs)
+            accuracies = np.zeros(n_train_batches*n_epochs)
+            val_losses = np.zeros(n_epochs)
+            val_accuracies = np.zeros(n_epochs)
+            val_counters = np.zeros(n_epochs)  # to catch at which training steps we validated
+            test_loss, test_accuracy = 0, 0
+            vars_to_train = model.trainable_variables
+
+            for epoch in range(n_epochs):
+                indices = np.random.permutation(n_train_samples)  # for shuffling. not finished yet.
+                for batch in range(n_train_batches):
+                    batch_imgs = f['train']['data'][batch*batch_size:(batch+1)*batch_size]
+                    if augment_data: batch_imgs = augment_seq(images=batch_imgs)
+                    batch_labels = f['train'][label_type][batch*batch_size:(batch+1)*batch_size]
+                    losses[int(checkpoint.step)], accuracies[int(checkpoint.step)] = train_step(model, batch_imgs, batch_labels, loss_fn, optimizer, vars_to_train, visualize_batches)
+                    if int(checkpoint.step) % 25 == 0:
+                        print('\rTraining - Epoch {}, batch {} -- loss = {}, accuracy = {} || Last valid - Epoch {} -- loss = {}, accuracy = {}'.format(epoch, batch, losses[int(checkpoint.step)], accuracies[int(checkpoint.step)], epoch-1, val_losses[max(epoch-1,0)], val_accuracies[max(epoch-1,0)]), end=' ')
+                    checkpoint.step.assign_add(1)
+                    if int(checkpoint.step) % 2500 == 0 or int(checkpoint.step) == (n_train_batches)*(n_epochs):
+                        save_path = saving_manager.save()
+                        print("\nSaved checkpoints for step {}: {} (epoch {}).".format(int(checkpoint.step), save_path, epoch))
+
+                for batch in range(n_val_batches):
+                    batch_imgs = f['val']['data'][batch * batch_size:(batch + 1) * batch_size]
+                    batch_labels = f['val'][label_type][batch * batch_size:(batch + 1) * batch_size]
+                    val_losses[epoch] += loss_fn(batch_labels, model(batch_imgs))/n_val_batches
+                    val_accuracies[epoch] += batch_accuracy(batch_labels, model(batch_imgs))/n_val_batches
+                    val_counters[epoch] = int(checkpoint.step)
+
+            print('\nComputing performance on test set...')
             for batch in range(n_test_batches):
-                batch_imgs = test_data[batch * batch_size:(batch + 1) * batch_size]
-                batch_labels = test_labels[batch * batch_size:(batch + 1) * batch_size]
-                test_loss += loss_fn(batch_labels, model(batch_imgs))/n_test_batches
-                test_accuracy += batch_accuracy(batch_labels, model(batch_imgs))/n_test_batches
-                if batch % 25 == 0:
-                    print('\rTesting progress: {} %'.format(batch/n_test_batches*100), end=' ')
+                batch_imgs = f['test']['data'][batch * batch_size:(batch + 1) * batch_size]
+                batch_labels = f['test'][label_type][batch * batch_size:(batch + 1) * batch_size]
+                test_loss += loss_fn(batch_labels, model(batch_imgs)) / n_test_batches
+                test_accuracy += batch_accuracy(batch_labels, model(batch_imgs)) / n_test_batches
+                if batch % 25 == 0 or batch == n_train_batches-1:
+                    print('\rTesting progress: {} %'.format(batch / n_test_batches * 100), end=' ')
             print('\nTesting loss = {}\nTesting accuracy = {}'.format(test_loss, test_accuracy))
 
-        fig, a = plt.subplots(1, 2)
-        a[0].plot(range(n_batches*n_epochs), losses)
-        a[1].plot(range(n_batches*n_epochs), accuracies)
-        plt.show()
+            fig, a = plt.subplots(1, 2)
+            a[0].plot(range(n_train_batches*n_epochs), losses, label='train')
+            a[0].plot(val_counters, val_losses, 'r', label='val')
+            a[0].plot(n_train_batches*n_epochs, test_loss, 'go', label='test')
+            a[0].legend(loc='upper right')
+            a[1].plot(range(n_train_batches*n_epochs), accuracies)
+            a[1].plot(val_counters, val_accuracies, 'r')
+            a[1].plot(n_train_batches*n_epochs, test_accuracy, 'go')
+            plt.savefig(checkpoint_path[:-4]+'learning_curves.png')
 
         return losses, accuracies
-
-
-def make_toy_dataset():
-    (train_images, train_labels), (test_images, test_labels) = tf.keras.datasets.mnist.load_data()
-    train_images = train_images.reshape(train_images.shape[0], 28, 28, 1).astype('float32')
-    test_images = test_images.reshape(test_images.shape[0], 28, 28, 1).astype('float32')
-    # also create fake finetuning dataset in which the task is to classify < vs. >= 5.
-    finetuning_train_images = train_images.copy()
-    finetuning_train_labels = train_labels.copy()
-    finetuning_test_images = test_images.copy()
-    finetuning_test_labels = test_labels.copy()
-    finetuning_train_labels[finetuning_train_labels < 5] = 0
-    finetuning_train_labels[finetuning_train_labels >= 5] = 1
-    finetuning_test_labels[finetuning_test_labels < 5] = 0
-    finetuning_test_labels[finetuning_test_labels >= 5] = 1
-    train_labels = tf.keras.utils.to_categorical(train_labels)
-    test_labels = tf.keras.utils.to_categorical(test_labels)
-    finetuning_train_labels = tf.keras.utils.to_categorical(finetuning_train_labels)
-    finetuning_test_labels = tf.keras.utils.to_categorical(finetuning_test_labels)
-    # Normalize the images to the range of [0., 1.]
-    train_images /= 255.
-    test_images /= 255.
-
-    return train_images, train_labels, test_images, test_labels, finetuning_train_images, finetuning_train_labels, finetuning_test_images, finetuning_test_labels
