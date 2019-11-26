@@ -188,11 +188,11 @@ def train_on_hdf5_dataset(model, dataset_path, label_type, batch_size, n_epochs,
 
         sometimes = lambda aug: iaa.Sometimes(0.5, aug)
         augment_seq = iaa.Sequential([iaa.Fliplr(0.5),
-                                      iaa.OneOf([iaa.AdditiveGaussianNoise(scale=0.03), iaa.AdditiveLaplaceNoise(scale=0.03), iaa.Dropout(.03)]),
+                                      iaa.OneOf([iaa.AdditiveGaussianNoise(scale=0.03), iaa.AdditiveLaplaceNoise(scale=0.03), iaa.Dropout(0.03)]),
                                       sometimes(iaa.Affine(scale={"x": (0.9, 1.1), "y": (0.9, 1.1)}, # scale images to 90-110% of their size, individually per axis
                                                            translate_percent={"x": (-0.1, 0.1), "y": (-0.1, 0.1)},  # translate by -10 to +10 percent (per axis)
-                                                           rotate=(-5, 5),  # rotate by -5 to +5 degrees
-                                                           shear=(-5, 5),  # shear by -16 to +16 degrees
+                                                           rotate=(-5, 5),  # rotate by n degrees
+                                                           shear=(-5, 5),  # shear by n degrees
                                                           ))
                                      ],
                                      random_order=True)
