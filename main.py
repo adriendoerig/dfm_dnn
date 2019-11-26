@@ -1,3 +1,7 @@
+############################### NOTES ###############################
+# OVERFITTING POSSIBILITY IF DIFFERENT GAZES IN TRAIN & TEST SETS
+#####################################################################
+
 import tensorflow as tf
 from helper_functions import train_on_hdf5_dataset, make_base_model, make_finetuning_model, make_RFD_hdf5, check_hdf5_dataset
 
