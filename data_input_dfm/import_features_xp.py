@@ -8,7 +8,7 @@ from show_trial_experiment import show_trial
 task_string='gender'
 
 # put your path here
-base_dir='/home/adf/faghelss/CharestLab/python_dev/humanbased_DNN'
+base_dir=r'C:\Users\doeri\PYCHARM_PROJECTS\dfm_dnn\humanbased_DNN_inputs'
 
 # load .mat containg all data needed
 mat_xp_labels = loadmat(op.join(base_dir, f'{task_string}_INPUT_MAT_DNN.mat'))
@@ -17,7 +17,7 @@ mat_xp_labels = loadmat(op.join(base_dir, f'{task_string}_INPUT_MAT_DNN.mat'))
 human_classification=mat_xp_labels['human_classification_experiment'] 
 
 # (subjects x trials x features presence/absence) tensor containing presence or absence of features at a given trial
-presence_feats_experiment=mat_xp_labels['presence_feats_experiment'] 
+presence_feats_experiment=mat_xp_labels['presence_feats_experiment']
 
 # (subjects x trials x stimulus presented) tensor indicating which stimulus was presented 
 which_stim_experiment=mat_xp_labels['which_stim_experiment'] 
@@ -25,14 +25,14 @@ which_stim_experiment=mat_xp_labels['which_stim_experiment']
 # a (stimuli x features x pixels) tensor containing the actual images of gabors.
 mat_img_gabors = h5py.File(op.join(base_dir,'Gabors_vectorized_images.mat'),'r')
 
- # un exemple de comment plotter the ith stimulus for participant n along with the response that participant made 
-gabors_images=mat_img_gabors.get('gabor_vectorized_images')
-gabors_images=np.array(gabors_images)
 
+''' un exemple de comment plotter the ith stimulus for participant n along with the response that participant made '''
 
-subject=101 # arbitrary subject to show
-trial=2197  # trial to show
+gabors_images = mat_img_gabors.get('gabor_vectorized_images')
+gabors_images = np.array(gabors_images)
 
+subject = 101 # arbitrary subject to show
+trial = 2197  # trial to show
 
 correct_incorrect=["incorrect","correct"] # labels for accurate/inaccurate responses 
 acc_trial=human_classification[subject,trial,0] # 1st dim for accuracy / 1 == accurate
@@ -40,15 +40,9 @@ acc_trial=human_classification[subject,trial,0] # 1st dim for accuracy / 1 == ac
 responses=["male","female"] # label for responses
 response_trial=human_classification[subject,trial,1] # 2nd dim for actual responses, also in logical
 
-
 human_resp=correct_incorrect[acc_trial]  # one can change this for responses if prefered
 
-
-#this is defined in show_trial_experiment.py ; the script is in the same folder
-show_trial(subject, 
-               trial,
-               human_resp,
-               which_stim_experiment,
-               presence_feats_experiment,
-               gabors_images)
+show_trial(subject, trial, human_resp, which_stim_experiment, presence_feats_experiment, gabors_images)
+show_trial(subject, trial+1, human_resp, which_stim_experiment, presence_feats_experiment, gabors_images)
+show_trial(subject, trial+2, human_resp, which_stim_experiment, presence_feats_experiment, gabors_images)
 

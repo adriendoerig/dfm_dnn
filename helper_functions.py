@@ -5,6 +5,8 @@ from matplotlib.image import imread
 from skimage.transform import resize
 import imgaug.augmenters as iaa
 import os, random, h5py
+import os.path as op
+from scipy.io import loadmat
 
 
 def make_base_model(img_shape, n_output_neurons, optimizer, base_model_name):
@@ -132,10 +134,77 @@ def make_RFD_hdf5(emotions='all', genders='all', angles='all', resized_shape=224
                 f[set]['gender_labels'][n] = tf.keras.utils.to_categorical(this_gender_label, num_classes=n_genders)
 
 
-def check_hdf5_dataset(dataset_path='./RFD_dataset.h5'):
-    # try to read the dataset if you want to check everything is alright
-    check_dataset = True
-    if check_dataset:
+def make_humanbased_hdf5(task, subject=None, resized_shape=224, data_path=r'C:\Users\doeri\PYCHARM_PROJECTS\dfm_dnn\humanbased_DNN_inputs'):
+    '''load data from the Radboud Faces Dataset.
+       task: str 'emotions' or 'gender'
+       subject: int identifier of the subject. If subject=None, the pooled data of all subjects will be used.
+       resized_shape: int we will resize images to be squares of this size
+       data_path: str path to the file containing the human data
+       output_path: str where to save the hdf5 file
+       '''
+
+    output_path = './humanbased_dataset_{}_subject_{}.h5'.format(task, subject) if subject is not None else './humanbased_dataset_{}_all_subjects.h5'.format(task)
+    if os.path.exists(output_path):
+        print('file {} exists. Skipping dataset creation'.format(output_path))
+        return
+
+    print('Loading data, this may take a minute.')
+    # load .mat containg all data needed
+    mat_xp_labels = loadmat(op.join(data_path, f'{task}_INPUT_MAT_DNN.mat'))
+    # (subjects x features x labelstype) tensor containing 1) accuracy and 2) actual responses for presented face
+    human_classification = mat_xp_labels['human_classification_experiment']
+    # (subjects x trials x features presence/absence) tensor containing presence or absence of features at a given trial
+    presence_feats_experiment = mat_xp_labels['presence_feats_experiment']
+    # (subjects x trials x stimulus presented) tensor indicating which stimulus was presented
+    which_stim_experiment = mat_xp_labels['which_stim_experiment']
+    # a (stimuli x features x pixels) tensor containing the actual images of gabors.
+    mat_img_gabors = h5py.File(op.join(data_path, 'Gabors_vectorized_images.mat'), 'r')
+    gabors_images = mat_img_gabors.get('gabor_vectorized_images')
+    gabors_images = np.array(gabors_images)
+
+    n_subjects_total = 116
+    n_trials_per_subject = 2400
+    n_imgs = n_trials_per_subject if subject is not None else n_subjects_total*n_trials_per_subject
+    subject_list = [subject] if subject is not None else range(116)
+    n_labels = 2
+    set_fractions = {'train': [0.0, 0.6], 'val': [0.6, 0.8], 'test': [0.8, 1.0]}  # fraction of all data for each set
+
+    # go through all images, resize to manageable size, get labels and save
+    with h5py.File(output_path, "w") as f:
+        for set in ["train", "val", "test"]:
+            set_indices = [int(set_fractions[set][0]*n_imgs), int(set_fractions[set][1]*n_imgs)]
+            set_n_imgs = set_indices[1] - set_indices[0]
+            group = f.create_group(set)
+            group.create_dataset("n_imgs", data=[set_n_imgs])
+            group.create_dataset("data", shape=((np.ceil(set_fractions[set][1]-set_fractions[set][0])*n_imgs), resized_shape, resized_shape, 1), dtype=np.float32)
+            group.create_dataset("humanbased_labels", shape=((np.ceil(set_fractions[set][1]-set_fractions[set][0])*n_imgs), n_labels), dtype=np.uint8)
+
+            counter = 0
+            for subject in subject_list:
+                for trial, index in enumerate(range(set_indices[0], set_indices[1])):
+                    print('\rCreating {} dataset {} %...'.format(set, int(counter/set_n_imgs*100)), end='')
+                    # get image and label from loaded data
+                    this_label = human_classification[subject, trial, 1]  # last dim: 0->trial accuracy, 1->trial response
+                    this_stim = int(which_stim_experiment[subject, trial]) - 1  # gets stimulus, -1 changes matlab indexes to python indexes
+                    # choose the specific trial, transform in boolean
+                    these_gabors = presence_feats_experiment[subject, trial, :] == 1
+                    # get all the Gabors images that we presented at this trial, for that stimulus
+                    stim_ex = gabors_images[this_stim, these_gabors, :]
+                    stim = np.sum(stim_ex, 0)  # sum all Gabs images along first dimension
+                    stim = np.reshape(stim, [250, 250])  # reshape the vectorized image to actual 250x250 image
+                    stim = np.array(stim).T  # transpose required from matlab to python indexing
+                    dataset_image = resize(np.expand_dims(stim, -1), output_shape=[resized_shape, resized_shape, 1])  # add a dimension (needed for convnets) and resize
+
+                    f[set]['data'][trial] = dataset_image
+                    f[set]['humanbased_labels'][trial] = tf.keras.utils.to_categorical(this_label, num_classes=n_labels)
+                    counter += 1
+
+
+def check_hdf5_dataset(dataset_type, dataset_path='./RFD_dataset.h5'):
+    '''try to read the dataset if you want to check everything is alright
+    dataset_type str 'RFD' or 'humanbased'
+    '''
+    if dataset_type is 'RFD':
         with h5py.File(dataset_path, "r") as f:
             sample_images = f['train']['data'][:25]
             sample_ID_labels = np.argmax(f['train']['ID_labels'][:25], axis=1)  # argmax to go from one_hot to int
@@ -145,7 +214,17 @@ def check_hdf5_dataset(dataset_path='./RFD_dataset.h5'):
             for n in range(25):
                 ax[n//5][n%5].imshow(sample_images[n, :, :, 0], cmap='gray')
                 ax[n//5][n%5].title.set_text('ID: {}, emotion: {}, gender: {}'.format(sample_ID_labels[n], sample_emotion_labels[n], sample_gender_labels[n]))
-        plt.show()
+    elif dataset_type is 'humanbased':
+        with h5py.File(dataset_path, "r") as f:
+            sample_images = f['train']['data'][:25]
+            sample_labels = np.argmax(f['train']['labels'][:25], axis=1)  # argmax to go from one_hot to int
+            fig, ax = plt.subplots(5, 5)
+            for n in range(25):
+                ax[n//5][n%5].imshow(sample_images[n, :, :, 0], cmap='gray')
+                ax[n//5][n%5].title.set_text('Label: {}'.format(sample_labels[n]))
+    else:
+        raise Exception("dataset type not understood. Please use 'RFD' or 'humanbased'")
+    plt.show()
 
 
 def visualize_batch(batch_images, batch_labels, preds, loss, accuracy):
