@@ -4,25 +4,27 @@ import matplotlib.pyplot as plt
 from matplotlib.image import imread
 from skimage.transform import resize
 import imgaug.augmenters as iaa
-import os, random, h5py
+import os, random, h5py, sys
 import os.path as op
 from scipy.io import loadmat
 
 
-def make_base_model(img_shape, n_output_neurons, optimizer, base_model_name):
+def make_base_model(img_shape, n_output_neurons, optimizer, base_model_name, model_counter):
     '''Create a DNN to perform a task
         img_shape: (int,int,int), (Height, Width, Channels) of input images
         n_output_neurons: int number of classes in task
         optimizer: normal keras optimizer
         base_model_name: str name to give the net
+        model_counter: int assign an "identification number" to your model name
         '''
 
-    if base_model_name.lower() == ('resnet50' or 'resnet50_hb'):
+    print(base_model_name.lower())
+    if (base_model_name.lower() == 'resnet50') or (base_model_name.lower() == 'resnet50_hb'):
         from tensorflow.keras.applications import ResNet50
         from main import batch_size
         input_layer = tf.keras.layers.Input(batch_shape=(batch_size,)+img_shape)
         model = ResNet50(weights=None, input_tensor=input_layer, classes=n_output_neurons)
-    elif base_model_name.lower() == ('vgg16' or 'vgg_16_hb') and img_shape[0]:
+    elif (base_model_name.lower() == 'vgg16') or (base_model_name.lower() == 'vgg_16_hb') and img_shape[0]:
         try:
             from tensorflow.keras.applications import VGG16
             from main import batch_size
@@ -46,6 +48,7 @@ def make_base_model(img_shape, n_output_neurons, optimizer, base_model_name):
 
     # needed for saving models
     checkpoint_dict = {}
+    base_model_name = str(model_counter) + '_' + base_model_name
     checkpoint_dict['checkpoint_path'] = './model_checkpoints/' + base_model_name + '_ckpt'
     checkpoint_dict['checkpoint'] = tf.train.Checkpoint(step=tf.Variable(0), optimizer=optimizer, net=model)
     checkpoint_dict['saving_manager'] = tf.train.CheckpointManager(checkpoint_dict['checkpoint'], checkpoint_dict['checkpoint_path'], max_to_keep=1)
@@ -58,13 +61,14 @@ def make_base_model(img_shape, n_output_neurons, optimizer, base_model_name):
     return model, checkpoint_dict
 
 
-def make_finetuning_model(base_model, n_output_neurons, optimizer, train_only_decoder, finetuning_model_name):
+def make_finetuning_model(base_model, n_output_neurons, optimizer, train_only_decoder, finetuning_model_name, model_counter):
     '''Take a DNN, replace the last layer to perform a new task and finetune
     base_model: tf.keras.Model model to finetune
     n_output_neurons: int number of classe sin new task
     optimizer: normal keras optimizer
     train_only_decoder: bool if True only retrain the new last layer, if False finetune whole network
     finetuning_model_name: str name to give the new finetuning net
+    model_counter: int assign an "identification number" to your model name
     '''
 
     cloned_model = tf.keras.models.clone_model(base_model)  # we need to make a new copy of the model to avoid changing the weights of the base models when we train the finetuning model.
@@ -76,6 +80,7 @@ def make_finetuning_model(base_model, n_output_neurons, optimizer, train_only_de
 
     # setup model saving
     checkpoint_dict = {}
+    finetuning_model_name = str(model_counter) + '_' + finetuning_model_name
     checkpoint_dict['checkpoint_path'] = './model_checkpoints/' + finetuning_model_name + '_ckpt'
     checkpoint_dict['checkpoint'] = tf.train.Checkpoint(step=tf.Variable(0), optimizer=optimizer, net=finetuning_model)
     checkpoint_dict['saving_manager'] = tf.train.CheckpointManager(checkpoint_dict['checkpoint'], checkpoint_dict['checkpoint_path'], max_to_keep=1)
@@ -289,8 +294,23 @@ def train_on_hdf5_dataset(model, dataset_path, label_type, batch_size, n_epochs,
     if os.path.exists(checkpoint_path+'/checkpoint'):
         checkpoint.restore(saving_manager.latest_checkpoint)
         print('\nCheckpoint found in {}, skipping training\n'.format(checkpoint_path))
-    else:
 
+        with h5py.File(dataset_path, 'r') as f:
+            n_test_samples = f['test']['n_imgs'][0]
+            n_test_batches = n_test_samples // batch_size
+            test_loss, test_accuracy = 0, 0
+
+            print('\nComputing performance on test set...')
+            for batch in range(n_test_batches):
+                batch_imgs = f['test']['data'][batch * batch_size:(batch + 1) * batch_size]
+                batch_labels = f['test'][label_type][batch * batch_size:(batch + 1) * batch_size]
+                test_loss += loss_fn(batch_labels, model(batch_imgs)) / n_test_batches
+                test_accuracy += batch_accuracy(batch_labels, model(batch_imgs)) / n_test_batches
+                if batch % 25 == 0 or batch == n_test_batches - 1:
+                    print('\rTesting progress: {} %'.format(batch / n_test_batches * 100), end=' ')
+            print('\nTesting loss = {}\nTesting accuracy = {}'.format(test_loss, test_accuracy))
+
+    else:
         # tensorboard
         log_dir = checkpoint_path+'/tensorboard_logdir/'
         summary_writer = tf.summary.create_file_writer(log_dir)
@@ -345,7 +365,7 @@ def train_on_hdf5_dataset(model, dataset_path, label_type, batch_size, n_epochs,
                             tf.summary.scalar('0_accuracy', accuracies[int(checkpoint.step)], step=int(checkpoint.step))
                             tf.summary.scalar('1_loss', losses[int(checkpoint.step)], step=int(checkpoint.step))
                             tf.summary.image('input_images', batch_imgs, step=int(checkpoint.step))
-                    if int(checkpoint.step) % 2500 == 0 or int(checkpoint.step) == (n_train_batches)*(n_epochs):
+                    if int(checkpoint.step) % 2500 == 0:  # save every 2500 iterations (we will also save after the training loop)
                         save_path = saving_manager.save()
                         print("\nSaved checkpoints for step {}: {} (epoch {}).".format(int(checkpoint.step), save_path, epoch))
                     checkpoint.step.assign_add(1)
@@ -358,13 +378,16 @@ def train_on_hdf5_dataset(model, dataset_path, label_type, batch_size, n_epochs,
                     val_accuracies[epoch] += batch_accuracy(batch_labels, model(batch_imgs))/n_val_batches
                     val_counters[epoch] = int(checkpoint.step)
 
+            save_path = saving_manager.save()
+            print("\nSaved checkpoints in {} after training.".format(save_path))
+
             print('\nComputing performance on test set...')
             for batch in range(n_test_batches):
                 batch_imgs = f['test']['data'][batch * batch_size:(batch + 1) * batch_size]
                 batch_labels = f['test'][label_type][batch * batch_size:(batch + 1) * batch_size]
                 test_loss += loss_fn(batch_labels, model(batch_imgs)) / n_test_batches
                 test_accuracy += batch_accuracy(batch_labels, model(batch_imgs)) / n_test_batches
-                if batch % 25 == 0 or batch == n_train_batches-1:
+                if batch % 25 == 0 or batch == n_test_batches-1:
                     print('\rTesting progress: {} %'.format(batch / n_test_batches * 100), end=' ')
             print('\nTesting loss = {}\nTesting accuracy = {}'.format(test_loss, test_accuracy))
 
@@ -378,7 +401,38 @@ def train_on_hdf5_dataset(model, dataset_path, label_type, batch_size, n_epochs,
             a[1].plot(n_train_batches*n_epochs, test_accuracy, 'go')
             plt.savefig(checkpoint_path[:-4]+'learning_curves.png')
 
-        return losses, accuracies
+    return test_accuracy
+
+
+def bar_plot(data, tick_labels, groups, output_path, x_label='Models', y_label='Test accuracy', title='bar_plot'):
+    '''Make and save a bar plot from a data vector
+    data: nxm array with n groups of m datapoints
+    tick_labels: list of m strings, to label the x-axis
+    groups: list of n strings, to label each group of datapoints
+    output_path: str indicating where to save the image
+    x_label & y_label: str writes what data are shown on the x & y axes'''
+
+    # data to plot
+    data = np.array(data)
+    n_groups = data.shape[1]
+    n_ticks = data.shape[0]
+
+    # create plot
+    plt.subplots()
+    index = np.arange(n_ticks)
+    bar_width = 0.35/n_groups
+    opacity = 1
+
+    for i in range(n_groups):
+        plt.bar(index+i*bar_width, data[:, i], bar_width, alpha=opacity*(1-i/20))
+
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.xticks(index+(n_groups//2)*bar_width, tick_labels, rotation=45)
+    plt.legend(groups)
+    plt.title(title)
+    plt.tight_layout()
+    plt.savefig(output_path)
 
 
 def test_robustness(model, model_name, checkpoint_dict, dataset_path, eps=0.3):
@@ -403,12 +457,16 @@ def test_robustness(model, model_name, checkpoint_dict, dataset_path, eps=0.3):
 
     with h5py.File(dataset_path, 'r') as f:
         n_imgs = f['test']['n_imgs'][0]
-        test_acc_clean = tf.metrics.SparseCategoricalAccuracy()
-        test_acc_fgsm = tf.metrics.SparseCategoricalAccuracy()
-        test_acc_pgd = tf.metrics.SparseCategoricalAccuracy()
+        test_acc_clean = tf.metrics.CategoricalAccuracy()
+        test_acc_fgsm = tf.metrics.CategoricalAccuracy()
+        test_acc_pgd = tf.metrics.CategoricalAccuracy()
 
         progress_bar_test = tf.keras.utils.Progbar(n_imgs)
-        for x, y in zip(f['test']['data'], f['test']['data']):
+        counter = 0
+        fig, ax = plt.subplots(5, 3)
+        for x, y in zip(f['test']['data'], f['test']['ID_labels']):
+            x = tf.expand_dims(x, 0)  # need to add batch dimension
+
             y_pred = model(x)
             test_acc_clean(y, y_pred)
 
@@ -420,8 +478,27 @@ def test_robustness(model, model_name, checkpoint_dict, dataset_path, eps=0.3):
             y_pred_pgd = model(x_pgd)
             test_acc_pgd(y, y_pred_pgd)
 
-            progress_bar_test.add(x.shape[0])
+            if counter < 5:
+                ax[counter, 0].imshow(np.squeeze(x), cmap='gray')
+                ax[counter, 1].imshow(np.squeeze(x_fgm), cmap='gray')
+                ax[counter, 2].imshow(np.squeeze(x_pgd), cmap='gray')
+                if counter == 0:
+                    ax[counter, 0].title.set_text('Orginials')
+                    ax[counter, 1].title.set_text('FGM adversaries')
+                    ax[counter, 2].title.set_text('PGD adversaries')
 
-    print('Model {}: test acc on clean examples (%): {:.3f}'.format(model_name, test_acc_clean.result() * 100))
-    print('Model {}: test acc on FGM adversarial examples (%): {:.3f}'.format(model_name, test_acc_fgsm.result() * 100))
-    print('Model {}: test acc on PGD adversarial examples (%): {:.3f}'.format(model_name, test_acc_pgd.result() * 100))
+            counter += 1
+            sys.stdout.write('\r')
+            progress_bar_test.add(x.shape[0])
+    clean_acc = test_acc_clean.result() * 100
+    fgm_acc = test_acc_fgsm.result() * 100
+    pgd_acc = test_acc_pgd.result() * 100
+    print('Model {}: test acc on clean examples (%): {:.3f}'.format(model_name, clean_acc))
+    print('Model {}: test acc on FGM adversarial examples (%): {:.3f}'.format(model_name, fgm_acc))
+    print('Model {}: test acc on PGD adversarial examples (%): {:.3f}'.format(model_name, pgd_acc))
+
+    plt.suptitle('test acc: originals: {:.3f}%, FGM advs: {:.3f}%, , PGD advs: {:.3f}%'.format(clean_acc, fgm_acc, pgd_acc))
+    plt.savefig(checkpoint_path[:-4] + 'adversarial_images.png')
+    plt.close()
+
+    return clean_acc, fgm_acc, pgd_acc
