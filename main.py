@@ -1,5 +1,6 @@
 ############################### NOTES ###############################
-# OVERFITTING POSSIBILITY IF DIFFERENT GAZES IN TRAIN & TEST SETS
+# USE EARLY STOPPING?
+# USE DROPOUT?
 #####################################################################
 
 import tensorflow as tf
@@ -8,16 +9,16 @@ from helper_functions import train_on_hdf5_dataset, make_base_model, make_finetu
     make_humanbased_hdf5, check_hdf5_dataset, test_robustness, bar_plot
 
 
-############################### NOTES ###############################
+#####################################################################
 # PARAMETERS, DATASETS, ETC.
 #####################################################################
 
 
 # General parameters
-model_name = 'basic_CNN'  # 'resnet50' or 'vgg' for standard networks. Otherwise, builds a simple CNN (see make_base_model() in helper_functions.py)
+model_name = 'basicCNN'  # 'resnet50' or 'vgg' for standard networks. Otherwise, builds a simple CNN (see make_base_model() in helper_functions.py)
 model_counter = 0  # will be used to label models in increasing order
 batch_size = 64
-n_epochs = 100
+n_epochs = 500
 img_shape = (128, 128, 1)
 RFD_IDs_model_names = []  # we will store the names of the models we test on the RFD identities here
 RFD_IDs_test_accuracies = []  # we will store the accuracies of the different models here
@@ -27,9 +28,10 @@ source_imgs_path = './RFD'
 n_IDs = 73
 emotions = ['angry', 'contemptuous', 'disgusted', 'fearful', 'happy', 'neutral', 'sad', 'surprised']
 genders = ['male', 'female']
-angles = ['090']  # ['000', '045', '090', '135', '180']
+angles = ['000', '045', '090', '135', '180']
+only_frontal = True
 RFD_dataset_path = './RFD_dataset.h5'
-make_RFD_hdf5(emotions=emotions, genders=genders, angles=angles, resized_shape=img_shape[0], im_path=source_imgs_path, output_path=RFD_dataset_path)
+make_RFD_hdf5(emotions=emotions, genders=genders, angles=angles, only_frontal=only_frontal, resized_shape=img_shape[0], im_path=source_imgs_path, output_path=RFD_dataset_path)
 if 0: check_hdf5_dataset('RFD', dataset_path=RFD_dataset_path)
 
 # Humanbased dataset
@@ -41,10 +43,10 @@ if 0: check_hdf5_dataset('humanbased', dataset_path=humanbased_dataset_path)
 
 # loss & optimizer we will use
 classification_loss = tf.keras.losses.CategoricalCrossentropy()
-optimizer = tf.optimizers.Adam(1e-4)
+optimizer = tf.optimizers.Adam(1e-5)
 
 
-############################### NOTES ######################################
+############################################################################
 # PHASE 0: TRAINING BASE MODELS ON RFD IDENTITIES, AND ON HUMANBASED DATA
 ############################################################################
 
@@ -64,7 +66,7 @@ train_on_hdf5_dataset(base_model_HB, humanbased_dataset_path, 'humanbased_labels
 model_counter += 1
 
 
-############################### NOTES ###############################
+#####################################################################
 # PHASE 1: FINETUNING ON RADBOUD FACES DATASET GENDERS
 #####################################################################
 
@@ -84,7 +86,7 @@ train_on_hdf5_dataset(b_RFDid_fa_RFDg, RFD_dataset_path, 'gender_labels', batch_
 model_counter += 1
 
 
-############################### NOTES ###############################
+#####################################################################
 # PHASE 2: FINETUNING ON THE EXPERIMENTAL HUMAN RESPONSES
 #####################################################################
 
@@ -104,7 +106,7 @@ train_on_hdf5_dataset(b_RFDid_fa_HBg, humanbased_dataset_path, 'humanbased_label
 model_counter += 1
 
 
-############################### NOTES ######################################################
+############################################################################################
 # PHASE 3: RETRAIN THE LAST LAYER OF EACH MODEL TO PERFORM THE IDENTITY TASK ON RFD
 ############################################################################################
 
@@ -156,7 +158,7 @@ model_counter += 1
 
 bar_plot(np.expand_dims(RFD_IDs_test_accuracies, -1), RFD_IDs_model_names, ['test_dataset'], './model_checkpoints/_test_accuracies.png', x_label='Models', y_label='Test accuracy', title='all model accuracies on test set')
 
-############################### NOTES #############################################################
+###################################################################################################
 # PHASE 4: TEST ROBUSTNESS OF THE DIFFERENT MODELS TO ADVERSARIAL NOISE ON THE IDENTITY TASK ON RFD
 ###################################################################################################
 

@@ -93,11 +93,12 @@ def make_finetuning_model(base_model, n_output_neurons, optimizer, train_only_de
     return finetuning_model, checkpoint_dict
 
 
-def make_RFD_hdf5(emotions='all', genders='all', angles='all', resized_shape=224, im_path='./RFD', output_path='./RFD_dataset.h5'):
+def make_RFD_hdf5(emotions='all', genders='all', angles='all', only_frontal=False, resized_shape=224, im_path='./RFD', output_path='./RFD_dataset.h5'):
     '''load data from the Radboud Faces Dataset.
        emotions: a list of 'angry', 'contemptuous', 'disgusted', 'fearful', 'happy', 'neutral', 'sad', 'surprised' or 'all'
        genders: a list of 'male', 'female' or 'all'
        angles: a list of '000', '045', '090', '135', '180' or 'all'
+       only_frontal: boolean indicating if you want only frontal gaze or all three of left, right & frontal (gaze directions are very similar images, so *may* lead to overfitting)
        path: path to the dataset (e.g. './RFD')
        resized_shape: int we will resize images to be squares of this size
        '''
@@ -118,6 +119,7 @@ def make_RFD_hdf5(emotions='all', genders='all', angles='all', resized_shape=224
     # get list of images satisfying the requested features
     full_list = os.listdir(im_path)
     final_list = [nm for nm in full_list if (any(ft in nm for ft in emotions) and any(ft in nm for ft in genders) and any(ft in nm for ft in angles))]  # this complicated statement makes sure at least one requested emotion, one requested gender and one requested angle are present
+    if only_frontal: final_list = [i for i in final_list if i[-11:-4] == 'frontal']  # keep only frontal gaze if requested
     random.shuffle(final_list)
     n_imgs, n_IDs, n_emotions, n_genders = len(final_list), 73, len(emotions), len(genders)
 
@@ -216,8 +218,8 @@ def make_humanbased_hdf5(task, subject=None, resized_shape=224, data_path=r'C:\U
                     stim = (stim-np.mean(stim))/np.std(stim)  # normalize each image to mean=0, std=1
                     dataset_image = resize(np.expand_dims(stim, -1), output_shape=[resized_shape, resized_shape, 1])  # add a dimension (needed for convnets) and resize
 
-                    f[set]['data'][trial] = dataset_image
-                    f[set]['humanbased_labels'][trial] = tf.keras.utils.to_categorical(this_label, num_classes=n_labels)
+                    f[set]['data'][counter] = dataset_image
+                    f[set]['humanbased_labels'][counter] = tf.keras.utils.to_categorical(this_label, num_classes=n_labels)
                     counter += 1
 
 
