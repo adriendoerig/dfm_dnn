@@ -187,7 +187,7 @@ def make_humanbased_hdf5(task, subject=None, resized_shape=224, data_path=r'C:\U
 
     n_subjects_total = 116
     n_trials_per_subject = 2400
-    subject_list = [subject] if subject is not None else range(116)
+    subject_list = [subject] if subject is not None else range(10)
     n_labels = 2
     set_fractions = {'train': [0.0, 0.6], 'val': [0.6, 0.8], 'test': [0.8, 1.0]}  # fraction of all data for each set
 
@@ -202,14 +202,14 @@ def make_humanbased_hdf5(task, subject=None, resized_shape=224, data_path=r'C:\U
             group.create_dataset("humanbased_labels", shape=((np.ceil(set_fractions[set][1]-set_fractions[set][0])*set_n_imgs), n_labels), dtype=np.uint8)
 
             counter = 0
-            for subject in subject_list:
+            for subj in subject_list:
                 for trial, index in enumerate(range(set_indices[0], set_indices[1])):
                     print('\rCreating humanbased {} dataset {} %...'.format(set, int(counter/set_n_imgs*100)), end='')
                     # get image and label from loaded data
-                    this_label = human_classification[subject, trial, 1]  # last dim: 0->trial accuracy, 1->trial response
-                    this_stim = int(which_stim_experiment[subject, trial]) - 1  # gets stimulus, -1 changes matlab indexes to python indexes
+                    this_label = human_classification[subj, trial, 1]  # last dim: 0->trial accuracy, 1->trial response
+                    this_stim = int(which_stim_experiment[subj, trial]) - 1  # gets stimulus, -1 changes matlab indexes to python indexes
                     # choose the specific trial, transform in boolean
-                    these_gabors = presence_feats_experiment[subject, trial, :] == 1
+                    these_gabors = presence_feats_experiment[subj, trial, :] == 1
                     # get all the Gabors images that we presented at this trial, for that stimulus
                     stim_ex = gabors_images[this_stim, these_gabors, :]
                     stim = np.sum(stim_ex, 0)  # sum all Gabs images along first dimension

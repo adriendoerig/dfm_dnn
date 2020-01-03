@@ -1,6 +1,7 @@
 ############################### NOTES ###############################
 # USE EARLY STOPPING?
 # USE DROPOUT?
+# TRAINING ONLY ON 90 DEG FACES IN HB MAY PRECLUDE LEARNING OF OTHER ANGLES IN RFDid
 #####################################################################
 
 import tensorflow as tf
@@ -28,7 +29,7 @@ source_imgs_path = './RFD'
 n_IDs = 73
 emotions = ['angry', 'contemptuous', 'disgusted', 'fearful', 'happy', 'neutral', 'sad', 'surprised']
 genders = ['male', 'female']
-angles = ['000', '045', '090', '135', '180']
+angles = ['90']  # ['000', '045', '090', '135', '180']
 only_frontal = True
 RFD_dataset_path = './RFD_dataset.h5'
 make_RFD_hdf5(emotions=emotions, genders=genders, angles=angles, only_frontal=only_frontal, resized_shape=img_shape[0], im_path=source_imgs_path, output_path=RFD_dataset_path)
@@ -36,14 +37,14 @@ if 0: check_hdf5_dataset('RFD', dataset_path=RFD_dataset_path)
 
 # Humanbased dataset
 task = 'gender'
-subject = 1
+subject = None
 make_humanbased_hdf5(task, subject, resized_shape=img_shape[0])
 humanbased_dataset_path = './humanbased_dataset_{}_subject_{}.h5'.format(task, subject) if subject is not None else './humanbased_dataset_{}_all_subjects.h5'.format(task)
 if 0: check_hdf5_dataset('humanbased', dataset_path=humanbased_dataset_path)
 
 # loss & optimizer we will use
 classification_loss = tf.keras.losses.CategoricalCrossentropy()
-optimizer = tf.optimizers.Adam(1e-5)
+optimizer = tf.optimizers.Adam(1e-4)
 
 
 ############################################################################
