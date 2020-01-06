@@ -1,0 +1,16 @@
+wheel
+numpy
+scipy
+ipython
+scikit-learn 
+scikit-image 
+pandas  
+joblib  
+cython
+opencv-python
+keras
+tensorflow
+tqdm
+h5py
+matplotlib
+imgaug
