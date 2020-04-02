@@ -1,8 +1,8 @@
-### How to run on bluebear gpus
+# How to run on bluebear gpus
 
-# turns out that the virtual env is slowing tf down like hell
+## turns out that the virtual env is slowing tf down like hell
 
-# here's a way to get training done on a gpu in a fraction of the time.
+### here's a way to get training done on a gpu in a fraction of the time.
 
 ```
 ssh bluebear.bham.ac.uk
